@@ -1,7 +1,10 @@
-import math
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
+from scipy.stats import gaussian_kde
+from matplotlib.colors import Normalize
+import scipy.stats as stats
+
 
 def possession_change_events(df, teamid_filter=None):
     """
@@ -51,95 +54,65 @@ def possession_change_events(df, teamid_filter=None):
                     'eventname', 'type', 'x_plot', 'y_plot']]
 
 
-def visualize_possession_changes(gameid, teamid, agg_df, possession_changes):
+
+
+
+def kde_density(xy_coords, grid_x, grid_y, bandwidth=20):
     """
-    可视化指定比赛、指定队伍的丢失球权事件位置（包含风格标签）
+    在给定网格上计算 KDE 密度。
+    """
+    kde = gaussian_kde(xy_coords.T, bw_method=0.2)  # 固定平滑程度
+    mesh_coords = np.vstack([grid_x.ravel(), grid_y.ravel()])
+    z = kde(mesh_coords).reshape(grid_x.shape)
+    return z
+
+
+def visualize_style_possession_losses_zscore(style_name, agg_df, possession_changes, grid_res=100):
+    """
+    可视化指定风格的 Z-score 标准化丢球位置热力图，与全体平均相比。
 
     参数:
-        gameid: 比赛 ID
-        teamid: 队伍 ID
-        agg_df: 含 style 的 team-level 聚合表
-        possession_changes: 来自 possession_change_events 的结果
+        style_name: 风格名字符串
+        agg_df: 聚合数据（含 style、teamid、gameid）
+        possession_changes: 事件级别数据（含 x_plot, y_plot）
+        grid_res: 网格分辨率（越大越细）
     """
-    # 获取风格标签
-    team_style_row = agg_df[(agg_df['gameid'] == gameid) & (agg_df['teamid'] == teamid)]
-    style = team_style_row['style'].iloc[0] if 'style' in team_style_row.columns and not team_style_row.empty else "Unknown"
-
-    # 取出该队该场的丢失事件
-    team_changes = possession_changes[(possession_changes['gameid'] == gameid) & (possession_changes['teamid'] == teamid)]
-    if team_changes.empty:
-        print(f"No possession losses found for team {teamid} in game {gameid}")
-        return
-
-    x_coords = team_changes['x_plot'].values
-    y_coords = team_changes['y_plot'].values
-
-    # 开始画图
-    plt.figure(figsize=(12, 8))
-
-    # 冰球场背景
-    plt.plot([-100, 100, 100, -100, -100], [-42.5, -42.5, 42.5, 42.5, -42.5], 'k-', linewidth=2)
-    plt.axvline(x=0, color='r', linestyle='-', linewidth=1.5, label='Center Line (x=0)')
-    plt.axvline(x=25, color='b', linestyle='--', linewidth=1.2, label='Blue Line (x=±25)')
-    plt.axvline(x=-25, color='b', linestyle='--', linewidth=1.2)
-    circle = plt.Circle((0, 0), 15, fill=False, color='b', linewidth=1)
-    plt.gca().add_patch(circle)
-
-    # 热力图 or 散点
-    if len(x_coords) > 5:
-        sns.kdeplot(x=x_coords, y=y_coords, cmap="YlOrRd", fill=True, bw_adjust=0.7)
-    plt.scatter(x_coords, y_coords, c='black', alpha=0.4, s=15)
-
-    plt.title(f"Possession Loss Heatmap\nGame {gameid}, Team {teamid}, Style: {style}")
-    plt.xlabel("X Coordinate (attacking right)")
-    plt.ylabel("Y Coordinate")
-    plt.xlim(-105, 105)
-    plt.ylim(-45, 45)
-    plt.grid(True, linestyle='--', alpha=0.3)
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
-
-
-def visualize_style_possession_losses(style_name, agg_df, possession_changes):
-    """
-    可视化指定风格下所有球队的平均丢失球权位置热力图（向右为进攻）
-
-    参数:
-        style_name: 字符串，例如 'Puck Control Play'
-        agg_df: 含风格标签和 teamid/gameid 的 team-level 聚合表
-        possession_changes: 来自 possession_change_events 的事件级 DataFrame
-    """
-    # 获取所有属于该风格的 teamid + gameid
+    # 1. 提取符合该风格的样本
     style_teams = agg_df[agg_df['style'] == style_name][['teamid', 'gameid']]
-    if style_teams.empty:
-        print(f"No teams found with style '{style_name}'")
+    merged_style = possession_changes.merge(style_teams, on=['teamid', 'gameid'], how='inner')
+    all_xy = possession_changes[['x_plot', 'y_plot']].dropna().values
+    style_xy = merged_style[['x_plot', 'y_plot']].dropna().values
+
+    if len(style_xy) < 30:
+        print(f"风格 {style_name} 样本过少（{len(style_xy)} 个事件），无法绘制。")
         return
 
-    # 合并 possession_changes 以提取所有符合该风格的事件
-    merged = possession_changes.merge(style_teams, on=['teamid', 'gameid'], how='inner')
-    if merged.empty:
-        print(f"No possession loss events found for style '{style_name}'")
-        return
+    # 2. 构造网格
+    x = np.linspace(-100, 100, grid_res)
+    y = np.linspace(-42.5, 42.5, grid_res)
+    X, Y = np.meshgrid(x, y)
 
-    x_coords = merged['x_plot'].values
-    y_coords = merged['y_plot'].values
+    # 3. 计算 KDE 密度（全体 & 当前风格）
+    global_density = kde_density(all_xy, X, Y)
+    style_density = kde_density(style_xy, X, Y)
 
-    # 画图
+    # 4. 计算 Z-score
+    z_map = (style_density - global_density.mean()) / global_density.std()
+
+    # 5. 画图
     plt.figure(figsize=(12, 8))
+    contour = plt.contourf(X, Y, z_map, levels=20, cmap='coolwarm', extend='both')
+    cbar = plt.colorbar(contour)
+    cbar.set_label("Z-Score Normalized Density")
+
+    # 冰球场参考线
     plt.plot([-100, 100, 100, -100, -100], [-42.5, -42.5, 42.5, 42.5, -42.5], 'k-', linewidth=2)
     plt.axvline(x=0, color='r', linestyle='-', linewidth=1.5, label='Center Line (x=0)')
     plt.axvline(x=25, color='b', linestyle='--', linewidth=1.2, label='Blue Line (x=±25)')
     plt.axvline(x=-25, color='b', linestyle='--', linewidth=1.2)
-    circle = plt.Circle((0, 0), 15, fill=False, color='b', linewidth=1)
-    plt.gca().add_patch(circle)
+    plt.gca().add_patch(plt.Circle((0, 0), 15, fill=False, color='b', linewidth=1))
 
-    if len(x_coords) > 10:
-        sns.kdeplot(x=x_coords, y=y_coords, cmap="coolwarm", fill=True, bw_adjust=0.8)
-    else:
-        plt.scatter(x_coords, y_coords, c='black', alpha=0.5, s=20)
-
-    plt.title(f"Average Possession Loss Heatmap for Style: {style_name}")
+    plt.title(f"Possession Loss Heatmap for Style: {style_name}\n(Z-Score Normalized, with Global Average Background)")
     plt.xlabel("X Coordinate (attacking right)")
     plt.ylabel("Y Coordinate")
     plt.xlim(-105, 105)

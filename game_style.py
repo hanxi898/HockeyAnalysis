@@ -4,11 +4,12 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report
-from xgboost import XGBClassifier
 import matplotlib.pyplot as plt
 import seaborn as sns
 import os
 from math import pi
+from sklearn.metrics import silhouette_score
+from scipy.stats import zscore
 
 
 os.environ["LOKY_MAX_CPU_COUNT"] = "4"
@@ -74,6 +75,8 @@ features_v2 = [
 ]
 X = StandardScaler().fit_transform(agg_df[features_v2])
 
+
+
 # 8. Clustering
 kmeans = KMeans(n_clusters=3, random_state=42)
 agg_df['cluster'] = kmeans.fit_predict(X)
@@ -104,27 +107,7 @@ plt.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1))
 plt.tight_layout()
 plt.show()
 
-# 10. XGBoost to explain clusters
-X_model = agg_df[features_v2]
-y_model = agg_df['cluster']
-X_train, X_test, y_train, y_test = train_test_split(X_model, y_model, test_size=0.2, random_state=42)
 
-xgb_model = XGBClassifier(use_label_encoder=False, eval_metric='mlogloss')
-xgb_model.fit(X_train, y_train)
-y_pred = xgb_model.predict(X_test)
-print("\n🎯 XGBoost Classification Report for Cluster Prediction:")
-print(classification_report(y_test, y_pred))
-
-# Feature importance plot
-plt.figure(figsize=(10, 6))
-importance = xgb_model.feature_importances_
-sorted_idx = np.argsort(importance)
-plt.barh(range(len(importance)), importance[sorted_idx], align='center')
-plt.yticks(range(len(importance)), [features_v2[i] for i in sorted_idx])
-plt.xlabel("Feature Importance")
-plt.title("XGBoost Feature Importance for Team Style Clusters")
-plt.tight_layout()
-plt.show()
 
 # 11. Pairwise style win rate matrix
 df_matches = agg_df[['gameid', 'teamid', 'style', 'result']].copy()
@@ -146,30 +129,23 @@ for _, row in df_matches.iterrows():
         records.append((s2, s1, 'draw'))
 
 results_df = pd.DataFrame(records, columns=['style_team', 'style_opp', 'outcome'])
-summary_df = results_df.pivot_table(index='style_team', columns='style_opp', aggfunc=lambda x: pd.Series([sum(x=='win'), sum(x=='draw'), sum(x=='loss')]), fill_value=0)
-
-# Print winrate heatmap
 winrate_numeric = results_df.assign(win=results_df['outcome'].map({'win': 1, 'draw': 0.5, 'loss': 0}))
 winrate_table = winrate_numeric.groupby(['style_team', 'style_opp'])['win'].mean().unstack().round(2)
-print("Pairwise Style Win Rate Matrix:")
-print(winrate_table)
+
+# normalize winrate table
+winrate_norm = winrate_table.sub(winrate_table.min(axis=1), axis=0)
+winrate_norm = winrate_norm.div(winrate_table.max(axis=1) - winrate_table.min(axis=1), axis=0).fillna(0)
+
+style_avg_winrate = winrate_table.mean(axis=1).round(2)
 
 plt.figure(figsize=(8, 6))
-sns.heatmap(winrate_table, annot=True, cmap="YlGnBu", fmt=".2f")
-plt.title("Win Rate by Team Style vs Opponent Style")
+sns.heatmap(winrate_norm, annot=winrate_table, cmap="YlOrBr", fmt=".2f", cbar_kws={"label": "Normalized Value"})
+plt.title("Normalized Style Win Rate Matrix\n(Annotations = Actual Win Rate)")
 plt.xlabel("Opponent Style")
 plt.ylabel("Team Style")
 plt.tight_layout()
 plt.show()
 
-# Print stacked outcome bar chart
-outcome_counts = results_df.groupby(['style_team', 'outcome']).size().unstack().fillna(0)
-percentages = outcome_counts[['win', 'draw', 'loss']].div(outcome_counts.sum(axis=1), axis=0)
-percentages.plot(kind='bar', stacked=True, colormap='Set2', figsize=(8, 6))
-plt.title("Outcome Breakdown per Team Style (Percentage)")
-plt.xlabel("Team Style")
-plt.ylabel("Percentage")
-plt.xticks(rotation=45)
-plt.tight_layout()
-plt.show()
+
+
 
