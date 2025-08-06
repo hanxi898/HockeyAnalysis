@@ -64,7 +64,7 @@ Key contributions include:
 | File | Description |
 |---|---|
 | `style.ipynb` | Main notebook for style clustering, matchup analysis, and visualization *(recommended rename: `style_possession_analysis.ipynb`)* |
-| `possession_loss_heatmap.py` | Script for extracting possession loss events, coordinate normalization, and Z‑score heatmap generation |
+| `change.py` | Script for extracting possession loss events, coordinate normalization, and Z‑score heatmap generation |
 | `game_style.py` | Aggregation of team-game features and style assignment |
 | `Hockey_Validation.ipynb` | Validation notebook for statistical tests and robustness checks |
 
