@@ -84,8 +84,3 @@ Key contributions include:
 
 ---
 
-## 6. How to Run
-
-### Setup
-```bash
-pip install numpy pandas matplotlib seaborn scipy
